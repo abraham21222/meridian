@@ -1,82 +1,142 @@
 import Foundation
 import CoreLocation
-import Combine // Needed for PassthroughSubject
+import Combine
+import MapKit
 
-// Manager class to handle location updates and permissions
-class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+// MARK: – Model
+struct Place: Identifiable {
+    let id = UUID()
+    let name: String
+    let coordinate: CLLocationCoordinate2D
+    let mapItem: MKMapItem
+    let distance: Double
+    let lastLeaseDealClosureDate: Date?
+    
+    init(mapItem: MKMapItem, distance: Double, lastLeaseDealClosureDate: Date? = nil) {
+        self.name = mapItem.name ?? "Unknown Place"
+        self.coordinate = mapItem.placemark.coordinate
+        self.mapItem = mapItem
+        self.distance = distance
+        self.lastLeaseDealClosureDate = lastLeaseDealClosureDate
+    }
+}
+
+// MARK: – Location‑search manager
+final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
-    @Published var location: CLLocation? = nil
-    @Published var authorizationStatus: CLAuthorizationStatus
 
-    // PassthroughSubject to publish building names (we'll use this later)
-    let buildingPublisher = PassthroughSubject<String, Never>()
+    @Published var location: CLLocation?
+    @Published var authorizationStatus: CLAuthorizationStatus
+    @Published var nearbyPlaces: [Place] = []
+    @Published var searchQuery: String = "business" // default query
+    @Published var searchRadiusMiles: Double = 0.5
+
+    private var currentSearch: MKLocalSearch?
 
     override init() {
         authorizationStatus = locationManager.authorizationStatus
         super.init()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest // High accuracy needed for buildings
-        locationManager.distanceFilter = 5 // Update every 5 meters
+
+        locationManager.delegate        = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.distanceFilter  = 5        // update every 5 m
     }
 
-    // Request permission when needed
-    func requestPermission() {
-        locationManager.requestWhenInUseAuthorization()
-    }
+    // MARK: – Permission helpers
+    func requestPermission() { locationManager.requestWhenInUseAuthorization() }
+    func startUpdatingLocation() { locationManager.startUpdatingLocation() }
+    func stopUpdatingLocation()  { locationManager.stopUpdatingLocation()  }
 
-    // Start tracking location
-    func startUpdatingLocation() {
-        if authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways {
-            locationManager.startUpdatingLocation()
-        } else {
-            // Handle cases where permission is not granted yet or denied
-            print("Location permission not granted.")
-            requestPermission() // Request again if not determined
+    // MARK: – CLLocationManagerDelegate
+    func locationManager(_ manager: CLLocationManager,
+                         didUpdateLocations locations: [CLLocation]) {
+
+        guard let location = locations.last else { return }
+        
+        DispatchQueue.main.async {
+            self.location = location
+            self.searchNearbyPlaces(at: location)
         }
     }
-
-    // Stop tracking location
-    func stopUpdatingLocation() {
-        locationManager.stopUpdatingLocation()
-    }
-
-    // MARK: - CLLocationManagerDelegate Methods
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         DispatchQueue.main.async {
             self.authorizationStatus = manager.authorizationStatus
-            // If permission granted, start updating
             if self.authorizationStatus == .authorizedWhenInUse || self.authorizationStatus == .authorizedAlways {
                 self.startUpdatingLocation()
             } else {
-                // Handle denial or restriction
-                print("Location permission denied or restricted.")
-                self.stopUpdatingLocation() // Ensure updates are stopped
-                self.location = nil // Clear last known location
+                self.stopUpdatingLocation()
+                self.location = nil
+                self.nearbyPlaces = []
             }
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        DispatchQueue.main.async {
-            self.location = location
-            // TODO: Add logic here to look up building based on location coordinates
-            // For now, we'll just publish a placeholder
-            self.lookupBuilding(at: location)
+    // MARK: – Nearby café search
+    public func searchNearbyPlaces(at location: CLLocation) {
+        currentSearch?.cancel()
+        
+        let request = MKLocalSearch.Request()
+        // Use the dynamic search query from the published property
+        request.naturalLanguageQuery = self.searchQuery
+        request.resultTypes = [.pointOfInterest]
+        
+        // Convert the chosen searchRadiusMiles to meters.
+        let radiusInMeters = searchRadiusMiles * 1609.34
+        request.region = MKCoordinateRegion(
+            center: location.coordinate,
+            latitudinalMeters: radiusInMeters,
+            longitudinalMeters: radiusInMeters
+        )
+        
+        print("DEBUG: Current location: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+        print("DEBUG: Search query: \(self.searchQuery)")
+        print("DEBUG: Search region center: \(request.region.center.latitude), \(request.region.center.longitude) with radius: \(radiusInMeters) meters")
+        
+        let search = MKLocalSearch(request: request)
+        currentSearch = search
+        
+        search.start { [weak self] response, error in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("DEBUG: Search error: \(error.localizedDescription)")
+                    return
+                }
+                guard let response = response else {
+                    print("DEBUG: No response received")
+                    return
+                }
+                
+                print("DEBUG: Total map items in raw response: \(response.mapItems.count)")
+                let allPlaces = response.mapItems.compactMap { item -> Place? in
+                    guard let loc = item.placemark.location else { return nil }
+                    let distance = location.distance(from: loc)
+                    return Place(mapItem: item, distance: distance)
+                }
+                
+                // Debug each result in miles.
+                for (index, place) in allPlaces.enumerated() {
+                    let miles = place.distance * 0.000621371
+                    print("DEBUG: [\(index)] '\(place.name)' at (\(place.coordinate.latitude), \(place.coordinate.longitude)) with distance: \(miles) miles")
+                }
+
+                // Filter to only include places within the search radius.
+                let filteredPlaces = allPlaces.filter { $0.distance <= radiusInMeters }
+                // If there are none within the threshold, use all available sorted by distance.
+                let finalPlaces = filteredPlaces.isEmpty ? allPlaces.sorted { $0.distance < $1.distance } : filteredPlaces.sorted { $0.distance < $1.distance }
+                self.nearbyPlaces = finalPlaces
+                
+                print("DEBUG: Final closest places for radius \(self.searchRadiusMiles) miles:")
+                for place in self.nearbyPlaces {
+                    let miles = place.distance * 0.000621371
+                    print("DEBUG: '\(place.name)' - \(miles) miles away")
+                }
+            }
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Failed to get user location: \(error.localizedDescription)")
-        // Optionally publish an error state
-    }
-
-    // Placeholder for building lookup logic
-    private func lookupBuilding(at location: CLLocation) {
-        // In a real app, you would use MKLocalSearch, Google Places API, OpenStreetMap data, etc.
-        // For this example, we'll just simulate finding a building name based on coordinates.
-        let buildingName = "Building near (\(String(format: "%.4f", location.coordinate.latitude)), \(String(format: "%.4f", location.coordinate.longitude)))"
-        buildingPublisher.send(buildingName)
+        print("Location error: \(error.localizedDescription)")
     }
 }
