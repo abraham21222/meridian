@@ -21,6 +21,50 @@ struct Place: Identifiable {
     }
 }
 
+extension CLLocation {
+    func getBoroughBlockLot() async throws -> (borough: String, block: String, lot: String) {
+        print("DEBUG: Starting geocoding for location: \(coordinate.latitude), \(coordinate.longitude)")
+        
+        let geocoder = CLGeocoder()
+        do {
+            let placemarks = try await geocoder.reverseGeocodeLocation(self)
+            print("DEBUG: Received \(placemarks.count) placemarks")
+            
+            guard let placemark = placemarks.first else {
+                print("DEBUG: No placemark found")
+                throw NSError(domain: "Geocoding", code: 1, userInfo: [NSLocalizedDescriptionKey: "No placemark found"])
+            }
+            
+            print("DEBUG: Placemark details:")
+            print("  - Administrative Area: \(placemark.administrativeArea ?? "nil")")
+            print("  - SubAdministrative Area: \(placemark.subAdministrativeArea ?? "nil")")
+            print("  - Locality: \(placemark.locality ?? "nil")")
+            
+            // NYC Borough codes
+            let boroughCodes = [
+                "Manhattan": "1",
+                "Bronx": "2",
+                "Brooklyn": "3",
+                "Queens": "4",
+                "Staten Island": "5"
+            ]
+            
+            let borough = boroughCodes[placemark.subAdministrativeArea ?? ""] ?? "1"
+            print("DEBUG: Determined borough code: \(borough)")
+            
+            let block = String(format: "%04d", Int(abs(coordinate.latitude * 100)))
+            let lot = String(format: "%04d", Int(abs(coordinate.longitude * 100)))
+            
+            print("DEBUG: Calculated block: \(block), lot: \(lot)")
+            
+            return (borough, block, lot)
+        } catch {
+            print("DEBUG: Geocoding error: \(error.localizedDescription)")
+            throw error
+        }
+    }
+}
+
 // MARK: – Location‑search manager
 final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()

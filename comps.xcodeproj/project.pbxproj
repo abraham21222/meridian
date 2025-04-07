@@ -197,6 +197,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				EB169C502DA41C9F00DD37A9 /* XCRemoteSwiftPackageReference "google-maps-ios-utils" */,
+				EB7B21402DA445C8000BDE87 /* XCRemoteSwiftPackageReference "soda-swift" */,
+				EB7B21442DA44832000BDE87 /* XCRemoteSwiftPackageReference "soda-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = EB169C1F2DA2FBDC00DD37A9 /* Products */;
@@ -606,6 +608,22 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.0.0;
+			};
+		};
+		EB7B21402DA445C8000BDE87 /* XCRemoteSwiftPackageReference "soda-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/socrata/soda-swift.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		EB7B21442DA44832000BDE87 /* XCRemoteSwiftPackageReference "soda-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/socrata/soda-ios-sdk.git";
+			requirement = {
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
