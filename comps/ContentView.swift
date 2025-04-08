@@ -9,19 +9,16 @@ import SwiftUI
 import CoreLocation
 import MapKit
 
-// Update main ContentView to include a TabView with two tabs.
 struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
     @EnvironmentObject var favoritesManager: FavoritesManager
-    private let acrisClient = ACRISClient(appToken: "hqj3OZ7DD43Q4cMZjcEznPLF1") // Fixed the token to match exactly
+    private let acrisClient = ACRISClient(appToken: "hqj3OZ7DD43Q4cMZjcEznPLF1")
     private let openDataClient = NYCOpenDataClient(appToken: "hqj3OZ7DD43Q4cMZjcEznPLF1")
     
-    // Default region for the map remains unchanged.
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 40.7359, longitude: -73.9911),
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     )
-    // Business types and radius options remain.
     let businessTypes = ["cafe", "restaurant", "bar", "hotel", "business"]
     @State private var selectedBusinessType: String = "cafe"
     let radiusOptions: [Double] = [0.1, 0.5, 1, 2, 5]
@@ -33,7 +30,6 @@ struct ContentView: View {
         TabView {
             NavigationView {
                 VStack(spacing: 0) {
-                    // Top filter controls for search.
                     VStack {
                         HStack {
                             Picker("Business Type", selection: $selectedBusinessType) {
@@ -75,7 +71,7 @@ struct ContentView: View {
                     ) { place in
                         MapAnnotation(coordinate: place.coordinate) {
                             PlaceMarkerView(place: place,
-                                            index: locationManager.nearbyPlaces.firstIndex(where: { $0.id == place.id }) ?? 0)
+                                          index: locationManager.nearbyPlaces.firstIndex(where: { $0.id == place.id }) ?? 0)
                         }
                     }
                     .frame(height: UIScreen.main.bounds.height * 0.5)
@@ -83,14 +79,13 @@ struct ContentView: View {
                     List {
                         ForEach(locationManager.nearbyPlaces) { place in
                             PlaceRowView(place: place,
-                                         index: locationManager.nearbyPlaces.firstIndex(where: { $0.id == place.id }) ?? 0)
+                                       index: locationManager.nearbyPlaces.firstIndex(where: { $0.id == place.id }) ?? 0)
                             .onTapGesture {
                                 fetchPropertyDetails(for: place)
                             }
                         }
                     }
                 }
-                //                .navigationTitle("Search")
                 .sheet(item: $selectedBuildingInfo) { _ in
                     propertyDetailsSheet
                 }
@@ -110,19 +105,18 @@ struct ContentView: View {
                 } message: {
                     Text(propertyError ?? "Unknown error")
                 }
-                .onAppear {
-                    locationManager.requestPermission()
-                    locationManager.startUpdatingLocation()
-                }
-                .onChange(of: locationManager.location) { _, newLocation in
-                    if let location = newLocation {
-                        region.center = location.coordinate
-                    }
-                }
             }
             .tabItem {
                 Image(systemName: "magnifyingglass")
                 Text("Search")
+            }
+            
+            NavigationView {
+                ProspectsView(locationManager: locationManager)
+            }
+            .tabItem {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                Text("Prospects")
             }
             
             NavigationView {
@@ -134,6 +128,15 @@ struct ContentView: View {
                 Text("Favorites")
             }
         }
+        .onAppear {
+            locationManager.requestPermission()
+            locationManager.startUpdatingLocation()
+        }
+        .onChange(of: locationManager.location) { _, newLocation in
+            if let location = newLocation {
+                region.center = location.coordinate
+            }
+        }
     }
     
     private func fetchPropertyDetails(for place: Place) {
@@ -142,20 +145,17 @@ struct ContentView: View {
         
         Task {
             do {
-                // 1. Convert lat/long to borough/block/lot
                 let location = CLLocation(latitude: place.coordinate.latitude,
                                         longitude: place.coordinate.longitude)
                 let (boroughCode, block, lot) = try await location.fetchBBL()
                 let bbl = "\(boroughCode)\(block)\(lot)"
                 
-                // 2. Fetch all data sequentially to avoid capturing async let variables
                 let mastersRecords = try await acrisClient.fetchPropertyInfo(borough: boroughCode, block: block, lot: lot)
                 let partiesResult = try await acrisClient.fetchParties(for: mastersRecords.map { $0.documentId })
                 let hpdContactsResult = try await acrisClient.fetchHPDContacts(bbl: bbl)
                 let plutoResult = try await openDataClient.fetchPLUTOLot(bbl: bbl)
                 let violationsResult = try await openDataClient.fetchDOBViolations(boroughCode: boroughCode, block: block, lot: lot)
                 
-                // 3. Update UI on MainActor with all results
                 await MainActor.run {
                     self.selectedBuildingInfo = BuildingInfo(
                         address: place.name,
@@ -176,13 +176,11 @@ struct ContentView: View {
         }
     }
     
-    
     var propertyDetailsSheet: some View {
         NavigationView {
             ScrollView {
                 if let info = selectedBuildingInfo {
                     VStack(alignment: .leading, spacing: 16) {
-                        // Property Overview
                         Group {
                             Text("Property Overview")
                                 .font(.headline)
@@ -206,7 +204,6 @@ struct ContentView: View {
                             .cornerRadius(8)
                         }
                         
-                        // Financial Metrics
                         Group {
                             Text("Financial Overview")
                                 .font(.headline)
@@ -227,7 +224,6 @@ struct ContentView: View {
                             .cornerRadius(8)
                         }
                         
-                        // Risk Assessment
                         Group {
                             Text("Risk Assessment")
                                 .font(.headline)
@@ -236,7 +232,7 @@ struct ContentView: View {
                                 HStack {
                                     Text("Risk Score: \(risk.score)")
                                         .bold()
-                                        .foregroundColor(risk.score > 80 ? .green : 
+                                        .foregroundColor(risk.score > 80 ? .green :
                                                        risk.score > 60 ? .orange : .red)
                                     Spacer()
                                 }
@@ -250,7 +246,6 @@ struct ContentView: View {
                             .cornerRadius(8)
                         }
                         
-                        // Key Contacts
                         Group {
                             Text("Key Contacts")
                                 .font(.headline)
@@ -276,7 +271,6 @@ struct ContentView: View {
                             }
                         }
                         
-                        // Recent Transactions
                         Group {
                             Text("Recent Transactions")
                                 .font(.headline)
@@ -307,7 +301,6 @@ struct ContentView: View {
     }
 }
 
-// New view for displaying favorite places.
 struct FavoritesView: View {
     @EnvironmentObject var favoritesManager: FavoritesManager
 
@@ -321,7 +314,6 @@ struct FavoritesView: View {
     }
 }
 
-// Updated PlaceRowView with a star button and a phone number button.
 struct PlaceRowView: View {
     let place: Place
     let index: Int
@@ -355,7 +347,6 @@ struct PlaceRowView: View {
             }
             Spacer()
             
-            // ADD: Button for making a call to the business
             if let phoneNumber = place.mapItem.phoneNumber {
                 Button(action: {
                     callBusiness(phoneNumber: phoneNumber)
@@ -367,7 +358,6 @@ struct PlaceRowView: View {
                 .buttonStyle(BorderlessButtonStyle())
             }
 
-            // Star button remains unchanged
             Button(action: {
                 favoritesManager.toggleFavorite(place: place)
             }) {
@@ -379,7 +369,6 @@ struct PlaceRowView: View {
         .padding(.vertical, 4)
     }
 
-    // Function to initiate a call
     private func callBusiness(phoneNumber: String) {
         guard let url = URL(string: "tel://\(phoneNumber)") else { return }
         if UIApplication.shared.canOpenURL(url) {
@@ -388,7 +377,6 @@ struct PlaceRowView: View {
     }
 }
 
-// Existing PlaceMarkerView and other views remain unchanged.
 struct PlaceMarkerView: View {
     let place: Place
     let index: Int
@@ -435,7 +423,6 @@ struct NearestPlaceRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Rank Circle
             ZStack {
                 Circle()
                     .fill(Color.blue)
@@ -446,7 +433,6 @@ struct NearestPlaceRow: View {
                     .font(.system(size: 18, weight: .bold))
             }
             
-            // Place Details
             VStack(alignment: .leading, spacing: 4) {
                 Text(place.name)
                     .font(.system(size: 17, weight: .semibold))
@@ -460,7 +446,6 @@ struct NearestPlaceRow: View {
             
             Spacer()
             
-            // Direction arrow
             Image(systemName: "chevron.right")
                 .foregroundColor(.secondary)
         }
@@ -483,30 +468,23 @@ extension CLLocationCoordinate2D {
     }
 }
 
-// BuildingInfo.swift  (or just extend the struct you already have)
 struct BuildingInfo: Identifiable {
     let id = UUID()
 
-    // existing
     let address: String
     let masterRecords: [ACRISMaster]
     let parties: [ACRISParty]
     let hpdContacts: [HPDContact]
 
-    // new
     let plutoLot: PLUTOLot?
     let dobViolations: [DOBViolation]
     
-    // MARK: - Real Estate Metrics
-    
-    // Format large numbers with commas
     private func formatNumber(_ number: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: number)) ?? String(number)
     }
     
-    // Format currency
     private func formatCurrency(_ amount: Double) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
@@ -582,19 +560,16 @@ struct BuildingInfo: Identifiable {
         var score = 100
         var factors = [String]()
         
-        // Deduct points for violations
         if !dobViolations.isEmpty {
             score -= dobViolations.count * 5
             factors.append("\(dobViolations.count) open DOB violations")
         }
         
-        // Check building age
         if let year = Int(plutoLot?.yearBuilt ?? "0"), year < 1950 {
             score -= 10
             factors.append("Building over 70 years old")
         }
         
-        // Check if properly registered with HPD
         if hpdContacts.isEmpty {
             score -= 15
             factors.append("No HPD registration")
@@ -625,12 +600,7 @@ struct BuildingInfo: Identifiable {
     }
 }
 
-// Existing code ...
 
-#Preview {
-    ContentView()
-        .environmentObject(FavoritesManager())
-}
 
 struct KeyValueRow: View {
     let key: String; let value: String?
@@ -657,4 +627,9 @@ struct SpecsView: View {
         .background(Color.gray.opacity(0.1))
         .cornerRadius(8)
     }
+}
+
+#Preview {
+    ContentView()
+        .environmentObject(FavoritesManager())
 }
