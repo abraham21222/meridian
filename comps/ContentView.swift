@@ -154,7 +154,6 @@ struct ContentView: View {
                 let hpdContactsResult = try await acrisClient.fetchHPDContacts(bbl: bbl)
                 let plutoResult = try await openDataClient.fetchPLUTOLot(bbl: bbl)
                 let violationsResult = try await openDataClient.fetchDOBViolations(boroughCode: boroughCode, block: block, lot: lot)
-                let leaseResult = try await acrisClient.fetchLeaseInfo(borough: boroughCode, block: block, lot: lot)
                 
                 // 3. Update UI on MainActor with all results
                 await MainActor.run {
@@ -164,8 +163,7 @@ struct ContentView: View {
                         parties: partiesResult,
                         hpdContacts: hpdContactsResult,
                         plutoLot: plutoResult,
-                        dobViolations: violationsResult,
-                        leaseInfo: leaseResult
+                        dobViolations: violationsResult
                     )
                     self.isLoadingProperty = false
                 }
@@ -238,7 +236,7 @@ struct ContentView: View {
                                 HStack {
                                     Text("Risk Score: \(risk.score)")
                                         .bold()
-                                        .foregroundColor(risk.score > 80 ? .green :
+                                        .foregroundColor(risk.score > 80 ? .green : 
                                                        risk.score > 60 ? .orange : .red)
                                     Spacer()
                                 }
@@ -252,69 +250,11 @@ struct ContentView: View {
                             .cornerRadius(8)
                         }
                         
-                        // Property Contacts
-                        Group {
-                            Text("Property Contacts")
-                                .font(.headline)
-                            
-                            if !info.currentOwners.isEmpty {
-                                Text("Owners").font(.subheadline).padding(.top)
-                                ForEach(info.currentOwners) { contact in
-                                    ContactRow(contact: contact)
-                                }
-                            }
-                            
-                            if !info.propertyManagers.isEmpty {
-                                Text("Property Managers").font(.subheadline).padding(.top)
-                                ForEach(info.propertyManagers) { contact in
-                                    ContactRow(contact: contact)
-                                }
-                            }
-                            
-                            if !info.tenants.isEmpty {
-                                Text("Recent Tenants").font(.subheadline).padding(.top)
-                                ForEach(info.tenants) { contact in
-                                    ContactRow(contact: contact)
-                                }
-                            }
-                        }
-                        .padding()
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(8)
-                        
-                        // Lease Information
-                        if !info.currentLeases.isEmpty {
-                            Group {
-                                Text("Lease Information")
-                                    .font(.headline)
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(info.currentLeases, id: \.tenant) { lease in
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(lease.tenant)
-                                                .font(.subheadline)
-                                                .bold()
-                                            Text("Term: \(lease.term)")
-                                                .foregroundColor(.secondary)
-                                            Text("Recorded: \(lease.recorded)")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .padding()
-                                        .background(Color.blue.opacity(0.1))
-                                        .cornerRadius(8)
-                                    }
-                                }
-                            }
-                            .padding()
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(8)
-                        }
-                        
                         // Key Contacts
                         Group {
                             Text("Key Contacts")
                                 .font(.headline)
-                            ForEach(info.allContacts, id: \.id) { contact in
+                            ForEach(info.keyContacts, id: \.name) { contact in
                                 VStack(alignment: .leading) {
                                     Text("\(contact.role): \(contact.name)")
                                         .font(.subheadline)
@@ -546,113 +486,17 @@ extension CLLocationCoordinate2D {
 // BuildingInfo.swift  (or just extend the struct you already have)
 struct BuildingInfo: Identifiable {
     let id = UUID()
+
+    // existing
     let address: String
     let masterRecords: [ACRISMaster]
     let parties: [ACRISParty]
     let hpdContacts: [HPDContact]
+
+    // new
     let plutoLot: PLUTOLot?
     let dobViolations: [DOBViolation]
-    var leaseInfo: [ACRISLease] = []
     
-    // MARK: - Contact Information
-    
-    struct Contact: Identifiable {
-        let id = UUID()
-        let role: String
-        let name: String
-        let phone: String?
-        let type: ContactType
-        let documentId: String?
-        
-        enum ContactType {
-            case owner
-            case agent
-            case tenant
-            case propertyManager
-            case other
-        }
-    }
-    
-    var allContacts: [Contact] {
-        var contacts: [Contact] = []
-        
-        // Add HPD contacts
-        contacts += hpdContacts.map { contact in
-            let type: Contact.ContactType = {
-                switch contact.contactType.lowercased() {
-                case "owner", "corporate owner":
-                    return .owner
-                case "agent":
-                    return .agent
-                case "property manager", "site manager":
-                    return .propertyManager
-                default:
-                    return .other
-                }
-            }()
-            
-            return Contact(
-                role: contact.contactType,
-                name: contact.name ?? "Unknown",
-                phone: contact.phone,
-                type: type,
-                documentId: nil
-            )
-        }
-        
-        // Add recent tenants from lease documents
-        let tenants = parties
-            .filter { $0.partyType.lowercased().contains("tenant") || $0.partyType.lowercased().contains("lessee") }
-            .map { party in
-                Contact(
-                    role: "Tenant",
-                    name: party.partyName,
-                    phone: nil, // ACRIS doesn't provide phone numbers
-                    type: .tenant,
-                    documentId: party.documentId
-                )
-            }
-        contacts += tenants
-        
-        return contacts
-    }
-    
-    var currentOwners: [Contact] {
-        allContacts.filter { $0.type == .owner }
-    }
-    
-    var propertyManagers: [Contact] {
-        allContacts.filter { $0.type == .propertyManager }
-    }
-    
-    var tenants: [Contact] {
-        allContacts.filter { $0.type == .tenant }
-    }
-    
-    // MARK: - Lease Information
-    
-    var currentLeases: [(tenant: String, term: String, recorded: String)] {
-        leaseInfo.compactMap { lease in
-            guard let tenant = parties.first(where: { $0.documentId == lease.documentId })?.partyName else {
-                return nil
-            }
-            
-            let term = if let years = lease.leaseTermYears {
-                "\(years) years"
-            } else if let months = lease.leaseTermMonths {
-                "\(months) months"
-            } else {
-                "Term not specified"
-            }
-            
-            return (
-                tenant: tenant,
-                term: term,
-                recorded: lease.recordedDateTime ?? "Unknown"
-            )
-        }
-    }
-
     // MARK: - Real Estate Metrics
     
     // Format large numbers with commas
@@ -670,12 +514,6 @@ struct BuildingInfo: Identifiable {
         return formatter.string(from: NSNumber(value: amount)) ?? "$\(amount)"
     }
     
-    private func extractPrice(from string: String) -> Double? {
-        // Remove any currency symbols and commas, then convert to Double
-        let numericString = string.filter { $0.isNumber || $0 == "." }
-        return Double(numericString)
-    }
-    
     var mostRecentSale: (date: String, price: String)? {
         guard let sale = masterRecords.first(where: { $0.recordType == "DEED" }),
               let price = Double(sale.documentId.prefix(while: { $0.isNumber })) else {
@@ -688,8 +526,7 @@ struct BuildingInfo: Identifiable {
         guard let lot = plutoLot,
               let bldgArea = Int(lot.bldgArea ?? "0"),
               let sale = mostRecentSale,
-              let price = extractPrice(from: sale.price),
-              bldgArea > 0 else {
+              let price = Double(sale.price.filter { $0.isNumber }) else {
             return nil
         }
         
@@ -766,6 +603,16 @@ struct BuildingInfo: Identifiable {
         return (max(0, score), factors)
     }
     
+    var keyContacts: [(role: String, name: String, phone: String?)] {
+        return hpdContacts.map { contact in
+            (
+                role: contact.contactType,
+                name: contact.name ?? "Unknown",
+                phone: contact.phone
+            )
+        }
+    }
+    
     var recentTransactions: [(type: String, party: String, date: String?)] {
         return parties.prefix(5).map { party in
             let master = masterRecords.first { $0.documentId == party.documentId }
@@ -775,38 +622,6 @@ struct BuildingInfo: Identifiable {
                 date: master?.goodThroughDate
             )
         }
-    }
-}
-
-// ADD: Contact Row View
-struct ContactRow: View {
-    let contact: BuildingInfo.Contact
-    
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text(contact.name)
-                .font(.subheadline)
-                .bold()
-            Text(contact.role)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            if let phone = contact.phone {
-                Button {
-                    if let url = URL(string: "tel://\(phone.replacingOccurrences(of: "-", with: ""))"),
-                       UIApplication.shared.canOpenURL(url) {
-                        UIApplication.shared.open(url)
-                    }
-                } label: {
-                    Label(phone, systemImage: "phone.fill")
-                        .foregroundColor(.blue)
-                }
-            }
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white)
-        .cornerRadius(8)
-        .shadow(color: .gray.opacity(0.2), radius: 2)
     }
 }
 
