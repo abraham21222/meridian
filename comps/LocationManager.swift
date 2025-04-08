@@ -72,10 +72,16 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     @Published var location: CLLocation?
     @Published var authorizationStatus: CLAuthorizationStatus
     @Published var nearbyPlaces: [Place] = []
-    @Published var searchQuery: String = "business" // default query
+    @Published var searchQuery: String = "business"
     @Published var searchRadiusMiles: Double = 0.5
 
     private var currentSearch: MKLocalSearch?
+    
+    // Default Manhattan location (Union Square area)
+    private let defaultManhattanLocation = CLLocation(
+        latitude: 40.7359,
+        longitude: -73.9911
+    )
 
     override init() {
         authorizationStatus = locationManager.authorizationStatus
@@ -84,6 +90,11 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
         locationManager.delegate        = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.distanceFilter  = 5        // update every 5 m
+        
+        // Set default location if running in simulator
+        #if targetEnvironment(simulator)
+        self.location = defaultManhattanLocation
+        #endif
     }
 
     // MARK: – Permission helpers
@@ -94,13 +105,21 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     // MARK: – CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager,
                          didUpdateLocations locations: [CLLocation]) {
-
         guard let location = locations.last else { return }
         
+        #if targetEnvironment(simulator)
+        // In simulator, always use Manhattan location
+        DispatchQueue.main.async {
+            self.location = self.defaultManhattanLocation
+            self.searchNearbyPlaces(at: self.defaultManhattanLocation)
+        }
+        #else
+        // On real device, use actual location
         DispatchQueue.main.async {
             self.location = location
             self.searchNearbyPlaces(at: location)
         }
+        #endif
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

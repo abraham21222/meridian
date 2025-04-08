@@ -42,16 +42,35 @@ struct ACRISParty: Codable {
 
 // New model for HPD Registration Contacts.
 struct HPDContact: Codable {
-    let bbl: String
+    let bbl: String?
     let contactType: String   // e.g., Owner, Agent, HeadOfficer, etc.
     let name: String?
     let phone: String?
     
     enum CodingKeys: String, CodingKey {
-        case bbl
+        case bbl = "bin_in_bbl"
         case contactType = "type"
-        case name
-        case phone
+        case name = "contact_name"
+        case phone = "contact_phone"
+    }
+}
+
+// New model for lease information
+struct ACRISLease: Codable {
+    let documentId: String
+    let documentType: String
+    let recordedDateTime: String?
+    let leaseModType: String?
+    let leaseTermYears: String?
+    let leaseTermMonths: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case documentId = "document_id"
+        case documentType = "doc_type"
+        case recordedDateTime = "recorded_datetime"
+        case leaseModType = "lease_modification_type"
+        case leaseTermYears = "lease_term_years"
+        case leaseTermMonths = "lease_term_months"
     }
 }
 
@@ -123,23 +142,55 @@ class ACRISClient {
     // Fetch HPD contacts.
     func fetchHPDContacts(bbl: String) async throws -> [HPDContact] {
         var comps = URLComponents(string: "https://data.cityofnewyork.us/resource/feu5-w2e2.json")!
+        
+        // Format the where clause correctly for the BBL query
+        let whereClause = "bin_in_bbl='\(bbl)'"
         comps.queryItems = [
-            URLQueryItem(name: "bbl", value: bbl),
+            URLQueryItem(name: "$where", value: whereClause),
+            URLQueryItem(name: "$$app_token", value: appToken),
             URLQueryItem(name: "$limit", value: "50")
         ]
+        
         guard let url = comps.url else {
             throw URLError(.badURL)
         }
+        
+        print("DEBUG: Fetching HPD contacts with URL: \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)
         
-        // Check if the returned data starts with an array bracket '['.
+        // Check if the returned data starts with an array bracket '['
         if let jsonString = String(data: data, encoding: .utf8),
            let firstChar = jsonString.trimmingCharacters(in: .whitespacesAndNewlines).first,
            firstChar != "[" {
-            print("DEBUG: HPD contact data not in expected array format. Returning empty array. Raw response: \(jsonString)")
+            print("DEBUG: HPD contact data not in expected array format. Raw response: \(jsonString)")
+            // Return empty array instead of throwing an error since missing HPD contacts is not critical
             return []
         }
-        return try JSONDecoder().decode([HPDContact].self, from: data)
+        
+        return (try? JSONDecoder().decode([HPDContact].self, from: data)) ?? []
+    }
+    
+    // Fetch lease information
+    func fetchLeaseInfo(borough: String, block: String, lot: String) async throws -> [ACRISLease] {
+        var urlComponents = URLComponents(string: "https://data.cityofnewyork.us/resource/te2k-9ynd.json")!
+        
+        let formattedBlock = block.hasPrefix("0") ? block : String(format: "%05d", Int(block) ?? 0)
+        let formattedLot = lot.hasPrefix("0") ? lot : String(format: "%04d", Int(lot) ?? 0)
+        
+        let query = "borough='\(borough)' AND block='\(formattedBlock)' AND lot='\(formattedLot)' AND doc_type in ('L', 'LL')"
+        urlComponents.queryItems = [
+            URLQueryItem(name: "$where", value: query),
+            URLQueryItem(name: "$$app_token", value: appToken),
+            URLQueryItem(name: "$order", value: "recorded_datetime DESC"),
+            URLQueryItem(name: "$limit", value: "5")
+        ]
+        
+        guard let url = urlComponents.url else {
+            throw URLError(.badURL)
+        }
+        
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return try JSONDecoder().decode([ACRISLease].self, from: data)
     }
 }
 
@@ -191,7 +242,6 @@ enum GeoClient {
         print("DEBUG: GeoClient - Making request to URL: \(url.absoluteString)")
         
         var request = URLRequest(url: url)
-        // Use the correct header name for Azure API Management
         request.addValue(id, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
         
         print("DEBUG: GeoClient - Request headers: \(request.allHTTPHeaderFields ?? [:])")
@@ -223,7 +273,6 @@ extension CLLocation {
     func fetchBBL() async throws -> (borough: String, block: String, lot: String) {
         print("DEBUG: fetchBBL - Starting reverse geocoding for location: \(coordinate.latitude), \(coordinate.longitude)")
         
-        // 1. Reverse‑geocode to get a mailing address
         let placemark = try await CLGeocoder().reverseGeocodeLocation(self).first
             ?? { throw URLError(.cannotFindHost) }()
         
@@ -239,7 +288,7 @@ extension CLLocation {
         guard
             let house = placemark.subThoroughfare,
             let street = placemark.thoroughfare,
-            let rawBorough = placemark.subAdministrativeArea  // "Manhattan", "Brooklyn", …
+            let rawBorough = placemark.subAdministrativeArea
         else {
             print("DEBUG: fetchBBL - Missing required address components:")
             print("  - House: \(placemark.subThoroughfare ?? "missing")")
@@ -248,7 +297,6 @@ extension CLLocation {
             throw URLError(.badURL)
         }
         
-        // Format borough name according to NYC Geoclient API requirements
         let borough = formatBorough(rawBorough)
         print("DEBUG: fetchBBL - Formatted address components:")
         print("  - House: \(house)")
@@ -256,8 +304,6 @@ extension CLLocation {
         print("  - Borough (raw): \(rawBorough)")
         print("  - Borough (formatted): \(borough)")
         
-        // 2. Ask GeoClient for the BBL
-        print("DEBUG: fetchBBL - Calling GeoClient.lookupAddress")
         let gc = try await GeoClient.lookupAddress(
             house: house,
             street: street,
@@ -273,10 +319,8 @@ extension CLLocation {
         return (gc.bblBoroughCode, gc.bblTaxBlock, gc.bblTaxLot)
     }
     
-    // Helper function to format borough names
     private func formatBorough(_ borough: String) -> String {
         let normalized = borough.uppercased()
-        // New York County = Manhattan
         if normalized.contains("NEW YORK") || normalized.contains("MANHATTAN") {
             return "MANHATTAN"
         }
@@ -291,7 +335,7 @@ extension CLLocation {
             return "STATEN ISLAND"
         default:
             print("DEBUG: Unknown borough format: \(borough)")
-            return "MANHATTAN" // Default to Manhattan if unknown
+            return "MANHATTAN"
         }
     }
 }
