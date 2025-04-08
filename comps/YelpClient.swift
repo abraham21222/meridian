@@ -63,7 +63,7 @@ final class YelpClient {
         print("DEBUG: YelpClient - Received data length: \(data.count) bytes")
         print("DEBUG: YelpClient - Response data: \(String(data: data, encoding: .utf8) ?? "nil")")
         
-        struct Envelope: Decodable { 
+        struct Envelope: Decodable {
             let businesses: [YelpBiz]
             let total: Int
         }
@@ -114,7 +114,7 @@ final class YelpClient {
             }
         }
         
-        struct Envelope: Decodable { 
+        struct Envelope: Decodable {
             let total: Int
             let businesses: [YelpBiz]
         }
