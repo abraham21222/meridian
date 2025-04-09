@@ -14,15 +14,32 @@ struct YelpBiz: Decodable, Identifiable {
     }
 }
 
+// ADD: Cache structure
+struct YelpCache {
+    let timestamp: Date
+    let businesses: [YelpBiz]
+}
+
 final class YelpClient {
-    private let apiKey = "qnXLobh-_HZFqIR3lWENdhIWC--_oZgFQQVKT33hYDTlKdaHWIVmhusvi5KNAbFu_8Jqo0eHULBL1j35GGpSEYPZOIE-uJbHvPq-WpgIGjLMqCAIDUdLLSElb1L1Z3Yx"
-    // TODO: Replace with your key
+    public  let apiKey = "qnXLobh-_HZFqIR3lWENdhIWC--_oZgFQQVKT33hYDTlKdaHWIVmhusvi5KNAbFu_8Jqo0eHULBL1j35GGpSEYPZOIE-uJbHvPq-WpgIGjLMqCAIDUdLLSElb1L1Z3Yx"
     private let base = "https://api.yelp.com/v3"
+    
+    // ADD: Cache
+    private var cache: [String: YelpCache] = [:]
+    private let cacheValidityDuration: TimeInterval = 3600 // 1 hour
     
     func search(term: String,
                coordinate: CLLocationCoordinate2D,
-               radiusMeters: Int = 16093,   // 10 mi
-               limit: Int = 50) async throws -> [YelpBiz] {
+               radiusMeters: Int = 16093,
+               limit: Int = 5) async throws -> [YelpBiz] {
+        
+        // Check cache
+        let cacheKey = "\(term)-\(coordinate.latitude)-\(coordinate.longitude)"
+        if let cached = cache[cacheKey],
+           Date().timeIntervalSince(cached.timestamp) < cacheValidityDuration {
+            print("DEBUG: YelpClient - Returning cached results")
+            return cached.businesses
+        }
         
         print("DEBUG: YelpClient - Starting search for term: \(term)")
         print("DEBUG: YelpClient - Location: \(coordinate.latitude), \(coordinate.longitude)")
@@ -63,14 +80,18 @@ final class YelpClient {
         print("DEBUG: YelpClient - Received data length: \(data.count) bytes")
         print("DEBUG: YelpClient - Response data: \(String(data: data, encoding: .utf8) ?? "nil")")
         
-        struct Envelope: Decodable {
-            let businesses: [YelpBiz]
-            let total: Int
-        }
-        
         do {
+            struct Envelope: Decodable {
+                let businesses: [YelpBiz]
+                let total: Int
+            }
+            
             let envelope = try JSONDecoder().decode(Envelope.self, from: data)
             print("DEBUG: YelpClient - Successfully decoded \(envelope.businesses.count) businesses")
+            
+            // Cache results
+            cache[cacheKey] = YelpCache(timestamp: Date(), businesses: envelope.businesses)
+            
             return envelope.businesses
         } catch {
             print("DEBUG: YelpClient - JSON Decoding error: \(error)")

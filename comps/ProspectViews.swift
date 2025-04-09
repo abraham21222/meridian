@@ -45,10 +45,14 @@ struct ProspectsView: View {
     @StateObject private var viewModel = TenantScorerViewModel()
     @State private var selectedCategory = "restaurant"
     
+    // Hold the row the user tapped
+    @State private var selectedProspect: TenantProspect?
+    
     let categories = ["restaurant", "cafe", "gym", "retail", "salon"]
     
     var body: some View {
         VStack {
+            // Category picker
             Picker("Category", selection: $selectedCategory) {
                 ForEach(categories, id: \.self) { category in
                     Text(category.capitalized).tag(category)
@@ -58,15 +62,12 @@ struct ProspectsView: View {
             .padding()
             .onChange(of: selectedCategory) { _, newValue in
                 if let location = locationManager.location {
-                    Task {
-                        await viewModel.fetchProspects(
-                            category: newValue,
-                            coordinate: location.coordinate
-                        )
-                    }
+                    Task { await viewModel.fetchProspects(category: newValue,
+                                                          coordinate: location.coordinate) }
                 }
             }
             
+            // Main content
             if viewModel.isLoading {
                 ProgressView()
             } else if viewModel.error != nil {
@@ -80,12 +81,8 @@ struct ProspectsView: View {
                         .foregroundColor(.secondary)
                     Button("Retry") {
                         if let location = locationManager.location {
-                            Task {
-                                await viewModel.fetchProspects(
-                                    category: selectedCategory,
-                                    coordinate: location.coordinate
-                                )
-                            }
+                            Task { await viewModel.fetchProspects(category: selectedCategory,
+                                                                  coordinate: location.coordinate) }
                         }
                     }
                     .buttonStyle(.bordered)
@@ -94,20 +91,145 @@ struct ProspectsView: View {
             } else {
                 List(viewModel.prospects, id: \.id) { prospect in
                     ProspectRow(prospect: prospect)
+                        .contentShape(Rectangle())    // make the whole row tappable
+                        .onTapGesture {               // open the sheet
+                            selectedProspect = prospect
+                        }
                 }
             }
         }
         .navigationTitle("Expansion Prospects")
         .onAppear {
             if let location = locationManager.location {
-                Task {
-                    await viewModel.fetchProspects(
-                        category: selectedCategory,
-                        coordinate: location.coordinate
-                    )
+                Task { await viewModel.fetchProspects(category: selectedCategory,
+                                                      coordinate: location.coordinate) }
+            }
+        }
+        // Sheet that appears when a row is tapped
+        .sheet(item: $selectedProspect) { prospect in
+            NavigationStack {                         // so NewsView gets a nav bar
+                NewsView(businessName: prospect.name)
+            }
+        }
+    }
+}
+struct NewsView: View {
+    let businessName: String
+    @Environment(\.dismiss) var dismiss
+    @State private var articles: [Article] = []
+    @State private var isLoading = true
+    
+    struct Article: Identifiable {
+        let id = UUID()
+        let title: String
+        let url: URL
+        let publishedAt: String
+    }
+    
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+            } else if articles.isEmpty {
+                VStack {
+                    Image(systemName: "newspaper")
+                        .font(.largeTitle)
+                        .foregroundColor(.gray)
+                    Text("No recent real estate news found")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                List(articles) { article in
+                    Link(destination: article.url) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(article.title)
+                                .foregroundColor(.primary)
+                            Text(article.publishedAt)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
             }
         }
+        .navigationTitle("Real Estate News")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+        .task {
+            await loadNews()
+        }
+    }
+    
+    func loadNews() async {
+        isLoading = true
+        let newsClient = NewsClient()
+        
+        do {
+            let keywords = [
+                businessName,
+                "real estate",
+                "lease",
+                "retail space",
+                "commercial property",
+                "expansion",
+                "location"
+            ].map { "\"\($0)\"" }
+            
+            let query = keywords.joined(separator: " OR ")
+            let url = URL(string: "https://newsapi.org/v2/everything?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&from=\(newsClient.lastMonthDate)&to=\(newsClient.todayDate)&sortBy=relevancy&apiKey=\(newsClient.apiKey)")!
+            
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let response = try JSONDecoder().decode(NewsResponse.self, from: data)
+            
+            articles = response.articles
+                .filter { article in
+                    let lowercaseTitle = article.title.lowercased()
+                    return lowercaseTitle.contains("space") ||
+                           lowercaseTitle.contains("property") ||
+                           lowercaseTitle.contains("retail") ||
+                           lowercaseTitle.contains("lease") ||
+                           lowercaseTitle.contains("location") ||
+                           lowercaseTitle.contains("expansion")
+                }
+                .map { Article(
+                    title: $0.title,
+                    url: URL(string: $0.url)!,
+                    publishedAt: formatDate($0.publishedAt)
+                )}
+        } catch {
+            print("Error loading news: \(error)")
+        }
+        
+        isLoading = false
+    }
+    
+    private func formatDate(_ dateString: String) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+        
+        guard let date = dateFormatter.date(from: dateString) else {
+            return "Recent"
+        }
+        
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateStyle = .medium
+        return displayFormatter.string(from: date)
+    }
+}
+
+fileprivate struct NewsResponse: Decodable {
+    let articles: [NewsArticle]
+    
+    struct NewsArticle: Decodable {
+        let title: String
+        let url: String
+        let publishedAt: String
     }
 }
 

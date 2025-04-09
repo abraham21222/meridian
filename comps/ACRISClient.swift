@@ -75,7 +75,7 @@ struct ACRISLease: Codable {
 }
 
 class ACRISClient {
-    private let apiKey: String
+    public let apiKey: String
     private let appToken: String
     private let baseURL = "https://data.cityofnewyork.us/resource/8h5j-fqxa.json"
     
